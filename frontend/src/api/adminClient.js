@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const adminApi = axios.create({ baseURL: '/api' });
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const adminApi = axios.create({ baseURL: API_BASE_URL });
 
 adminApi.interceptors.request.use((config) => {
   const token = localStorage.getItem('educore_admin_token');
