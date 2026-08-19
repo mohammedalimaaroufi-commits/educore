@@ -101,13 +101,30 @@ router.get('/teachers', (req, res) => {
 // GET /api/admin/conversations  -> one row per teacher who has exchanged messages, with last message + unread count
 router.get('/conversations', (req, res) => {
   const rows = db.prepare(`
-    SELECT t.id as teacher_id, t.full_name, t.email,
-      (SELECT text FROM messages m WHERE m.teacher_id = t.id ORDER BY m.created_at DESC LIMIT 1) as last_message,
-      (SELECT created_at FROM messages m WHERE m.teacher_id = t.id ORDER BY m.created_at DESC LIMIT 1) as last_message_at,
-      (SELECT COUNT(*) FROM messages m WHERE m.teacher_id = t.id AND m.sender = 'teacher' AND m.read_by_admin = 0) as unread_count
-    FROM teachers t
-    WHERE EXISTS (SELECT 1 FROM messages m WHERE m.teacher_id = t.id)
-    ORDER BY last_message_at DESC
+    WITH ranked_messages AS (
+      SELECT
+        m.teacher_id,
+        m.text,
+        m.created_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY m.teacher_id
+          ORDER BY m.created_at DESC, m.id DESC
+        ) AS message_rank,
+        SUM(CASE WHEN m.sender = 'teacher' AND m.read_by_admin = 0 THEN 1 ELSE 0 END)
+          OVER (PARTITION BY m.teacher_id) AS unread_count
+      FROM messages m
+    )
+    SELECT
+      t.id AS teacher_id,
+      t.full_name,
+      t.email,
+      r.text AS last_message,
+      r.created_at AS last_message_at,
+      r.unread_count
+    FROM ranked_messages r
+    JOIN teachers t ON t.id = r.teacher_id
+    WHERE r.message_rank = 1
+    ORDER BY r.created_at DESC
   `).all();
   res.json({ conversations: rows });
 });

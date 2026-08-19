@@ -201,11 +201,27 @@ function ChatPanel({ initialTeacher }) {
   useEffect(() => {
     loadConversations();
     const token = localStorage.getItem('educore_admin_token');
-    if (!token) return;
-    const socket = connectSocket(token);
+    if (!token) return undefined;
+    const socket = connectSocket(token, {
+      onReconnect: loadConversations,
+      onError: (err) => console.warn('Admin chat connection error', err.message),
+    });
     socketRef.current = socket;
     socket.on('new_message', (msg) => {
-      loadConversations();
+      setConversations((prev) => {
+        const existing = prev.find((c) => c.teacher_id === msg.teacher_id);
+        if (!existing) {
+          loadConversations();
+          return prev;
+        }
+        const updated = {
+          ...existing,
+          last_message: msg.text,
+          last_message_at: msg.created_at,
+          unread_count: msg.sender === 'teacher' ? existing.unread_count + 1 : existing.unread_count,
+        };
+        return [updated, ...prev.filter((c) => c.teacher_id !== msg.teacher_id)];
+      });
       setActive((current) => {
         if (current && current.teacher_id === msg.teacher_id) {
           setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
@@ -213,7 +229,10 @@ function ChatPanel({ initialTeacher }) {
         return current;
       });
     });
-    return () => socket.disconnect();
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -222,9 +241,13 @@ function ChatPanel({ initialTeacher }) {
 
   useEffect(() => {
     if (!active) return;
-    adminApi.get(`/admin/messages/${active.teacher_id}`).then(({ data }) => setMessages(data.messages));
+    adminApi.get(`/admin/messages/${active.teacher_id}`).then(({ data }) => setMessages(data.messages || []));
     socketRef.current?.emit('join_conversation', active.teacher_id);
-    loadConversations();
+    setConversations((prev) => prev.map((conversation) => (
+      conversation.teacher_id === active.teacher_id
+        ? { ...conversation, unread_count: 0 }
+        : conversation
+    )));
   }, [active]);
 
   useEffect(() => {
@@ -234,9 +257,27 @@ function ChatPanel({ initialTeacher }) {
   const send = async (e) => {
     e.preventDefault();
     if (!text.trim() || !active) return;
-    const draft = text;
+    const draft = text.trim();
     setText('');
-    await adminApi.post(`/admin/messages/${active.teacher_id}`, { text: draft });
+    const optimisticId = `local-${Date.now()}`;
+    const optimistic = {
+      id: optimisticId,
+      teacher_id: active.teacher_id,
+      sender: 'admin',
+      text: draft,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    try {
+      const { data } = await adminApi.post(`/admin/messages/${active.teacher_id}`, { text: draft });
+      setMessages((prev) => prev.map((message) => (
+        message.id === optimisticId ? data.message : message
+      )));
+    } catch (err) {
+      setMessages((prev) => prev.filter((message) => message.id !== optimisticId));
+      setText(draft);
+      console.error('Unable to send admin message', err);
+    }
   };
 
   return (

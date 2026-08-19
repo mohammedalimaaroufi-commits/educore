@@ -287,6 +287,7 @@ CREATE INDEX IF NOT EXISTS idx_comment_templates_teacher ON comment_templates(te
 CREATE INDEX IF NOT EXISTS idx_payment_requests_teacher ON payment_requests(teacher_id, status);
 CREATE INDEX IF NOT EXISTS idx_grade_recommendation_rules_teacher ON grade_recommendation_rules(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_messages_teacher ON messages(teacher_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(teacher_id, sender, read_by_admin, created_at);
 CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token);
 CREATE INDEX IF NOT EXISTS idx_behavior_type_templates_teacher ON behavior_type_templates(teacher_id);
 `);

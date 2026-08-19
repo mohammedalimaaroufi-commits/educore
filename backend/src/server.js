@@ -50,7 +50,11 @@ app.use(express.json({ limit: '5mb' }));
 
 
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok', name: 'EduCore Manager API' }));
+app.get('/api/health', (req, res) => res.json({
+  status: 'ok',
+  name: 'EduCore Manager API',
+  database: process.env.LIBSQL_URL ? 'turso' : 'sqlite',
+}));
 
 
 
@@ -112,7 +116,15 @@ app.use((err, req, res, next) => {
 
 const server = http.createServer(app);
 
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, {
+  cors: { origin: '*' },
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: false,
+  },
+  pingInterval: 25000,
+  pingTimeout: 20000,
+});
 
 app.set('io', io);
 

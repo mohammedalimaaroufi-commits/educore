@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { connectSocket } from '../api/socket';
 import Icon from './Icon.jsx';
@@ -10,32 +10,48 @@ export default function ChatWidget() {
   const [unread, setUnread] = useState(0);
   const socketRef = useRef(null);
   const scrollRef = useRef(null);
+  const openRef = useRef(open);
 
-  const loadHistory = async () => {
-    const { data } = await api.get('/messages');
-    setMessages(data.messages);
-    setUnread(0);
-  };
+  useEffect(() => { openRef.current = open; }, [open]);
 
-  useEffect(() => {
-    const token = localStorage.getItem('educore_token');
-    if (!token) return;
-    loadHistory();
-
-    const socket = connectSocket(token);
-    socketRef.current = socket;
-    socket.on('new_message', (msg) => {
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
-      if (msg.sender === 'admin') setUnread((u) => (open ? 0 : u + 1));
-    });
-
-    return () => socket.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const loadHistory = useCallback(async () => {
+    try {
+      const { data } = await api.get('/messages');
+      setMessages(data.messages || []);
+      if (openRef.current) setUnread(0);
+    } catch (err) {
+      console.error('Unable to load chat history', err);
+    }
   }, []);
 
   useEffect(() => {
-    if (open) { setUnread(0); loadHistory(); }
-  }, [open]);
+    const token = localStorage.getItem('educore_token');
+    if (!token) return undefined;
+
+    loadHistory();
+    const socket = connectSocket(token, {
+      onReconnect: loadHistory,
+      onError: (err) => console.warn('Chat connection error', err.message),
+    });
+    socketRef.current = socket;
+    socket.on('new_message', (msg) => {
+      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      if (msg.sender === 'admin' && !openRef.current) setUnread((u) => u + 1);
+    });
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [loadHistory]);
+
+  const toggleOpen = () => {
+    setOpen((value) => {
+      const next = !value;
+      if (next) loadHistory();
+      return next;
+    });
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -43,10 +59,27 @@ export default function ChatWidget() {
 
   const send = async (e) => {
     e.preventDefault();
-    if (!text.trim()) return;
-    const draft = text;
+    const draft = text.trim();
+    if (!draft) return;
     setText('');
-    await api.post('/messages', { text: draft });
+    const optimisticId = `local-${Date.now()}`;
+    const optimistic = {
+      id: optimisticId,
+      sender: 'teacher',
+      text: draft,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    try {
+      const { data } = await api.post('/messages', { text: draft });
+      setMessages((prev) => prev.map((message) => (
+        message.id === optimisticId ? data.message : message
+      )));
+    } catch (err) {
+      setMessages((prev) => prev.filter((message) => message.id !== optimisticId));
+      setText(draft);
+      console.error('Unable to send message', err);
+    }
   };
 
   return (
@@ -75,7 +108,7 @@ export default function ChatWidget() {
         </div>
       )}
 
-      <button onClick={() => setOpen((o) => !o)}
+      <button onClick={toggleOpen}
         className="relative w-14 h-14 rounded-full bg-primary text-white shadow-lg flex items-center justify-center hover:bg-primary-dark transition-colors">
         <Icon name="messageCircle" className="w-6 h-6" />
         {unread > 0 && !open && (
