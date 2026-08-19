@@ -2,17 +2,26 @@
 // This single file defines the full schema (ERD) and exports a ready connection.
 const path = require('path');
 const fs = require('fs');
-const Database = require('better-sqlite3');
+const LocalDatabase = require('better-sqlite3');
+const RemoteDatabase = require('libsql');
 
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, 'educore.sqlite'));
-db.pragma('journal_mode = WAL');       // allows concurrent reads while writing -> snappier UI under normal use
-db.pragma('foreign_keys = ON');
-db.pragma('synchronous = NORMAL');     // safe with WAL, notably faster than the FULL default for frequent small writes (grade cells, behavior taps)
-db.pragma('cache_size = -8000');       // ~8MB page cache in memory instead of the tiny default, fewer disk hits on repeated reads
-db.pragma('temp_store = MEMORY');      // temp tables/sorts (ORDER BY, GROUP BY in analytics) happen in RAM, not on disk
+const isRemote = Boolean(process.env.LIBSQL_URL);
+const db = isRemote
+  ? new RemoteDatabase(process.env.LIBSQL_URL, {
+      authToken: process.env.LIBSQL_AUTH_TOKEN,
+    })
+  : new LocalDatabase(path.join(DATA_DIR, 'educore.sqlite'));
+
+if (!isRemote) {
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('cache_size = -8000');
+  db.pragma('temp_store = MEMORY');
+}
 
 // ------------------------------------------------------------------
 // SCHEMA (ERD)

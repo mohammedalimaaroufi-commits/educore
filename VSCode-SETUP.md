@@ -30,6 +30,8 @@ npm run dev
 
 ملف `backend/.env.example` يوضح المتغيرات المطلوبة. أنشئ نسخة باسم `backend/.env` محليًا، ولا ترفعها إلى GitHub.
 
+في Render، أضف `LIBSQL_URL` و`LIBSQL_AUTH_TOKEN` لاستخدام قاعدة Turso/libSQL الدائمة. عند غياب هذين المتغيرين يستخدم الخادم SQLite المحلية للتطوير.
+
 ملف `frontend/.env.production` يوجّه نسخة الإنتاج إلى:
 
 ```text
@@ -50,6 +52,13 @@ https://educore-qvxl.onrender.com
 
 تم استبعاد كلمات المرور وملفات الأسرار من هذا الأرشيف. اضبط `JWT_SECRET` و`ADMIN_PASSWORD` من متغيرات البيئة في Render، ولا تضع قيمها داخل ملفات المشروع أو GitHub.
 
-## ملاحظة قاعدة البيانات
+## قاعدة البيانات الدائمة
 
-يستخدم المشروع SQLite. على الخطة المجانية في Render قد لا يكون القرص المحلي مناسبًا لتخزين إنتاجي دائم؛ يُفضّل استخدام قاعدة بيانات دائمة عند الانتقال إلى تشغيل فعلي مستمر.
+يستخدم الخادم Turso/libSQL عند ضبط `LIBSQL_URL` و`LIBSQL_AUTH_TOKEN`، مع الاحتفاظ بدعم SQLite محليًا. لترحيل ملف SQLite قديم إلى Turso، استخدم:
+
+```bash
+cd backend
+LIBSQL_URL=libsql://... LIBSQL_AUTH_TOKEN=... node scripts/migrate-sqlite-to-turso.js
+```
+
+لا تضع رمز الوصول داخل GitHub؛ خزّنه في Environment Variables في Render.
