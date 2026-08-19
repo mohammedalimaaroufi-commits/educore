@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext.jsx';
+import { readProfileDraft, removeProfileDraft, savePendingProfile, saveProfileDraft } from '../utils/localCache.js';
 import SchemesManager from '../components/SchemesManager.jsx';
 import BehaviorTemplateManager from '../components/BehaviorTemplateManager.jsx';
 import BackupManager from '../components/BackupManager.jsx';
+import LocalStorageManager from '../components/LocalStorageManager.jsx';
 
 const CATEGORIES = [
   { id: 'grade', label: 'الدرجات' },
@@ -23,33 +25,73 @@ const TABS = [
 ];
 
 function ProfileTab() {
-  const { teacher, refreshMe } = useAuth();
+  const { teacher, refreshMe, updateLocalTeacher } = useAuth();
   const [profile, setProfile] = useState({ full_name: '', subject: '', school_stage: '', school_name: '' });
   const [savedMsg, setSavedMsg] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (teacher) setProfile({ full_name: teacher.full_name, subject: teacher.subject || '', school_stage: teacher.school_stage || '', school_name: teacher.school_name || '' });
+    if (!teacher) return;
+    const serverProfile = {
+      full_name: teacher.full_name || '',
+      subject: teacher.subject || '',
+      school_stage: teacher.school_stage || '',
+      school_name: teacher.school_name || '',
+    };
+    const localDraft = readProfileDraft(teacher.id);
+    const draftMatchesServer = localDraft && JSON.stringify(localDraft) === JSON.stringify(serverProfile);
+    if (draftMatchesServer) removeProfileDraft(teacher.id);
+    setProfile(draftMatchesServer ? serverProfile : (localDraft || serverProfile));
+    setDraftDirty(Boolean(localDraft && !draftMatchesServer));
   }, [teacher]);
+
+  useEffect(() => {
+    if (teacher?.id && draftDirty && profile.full_name) saveProfileDraft(teacher.id, profile);
+  }, [teacher?.id, profile, draftDirty]);
+
+  const updateProfileField = (field, value) => {
+    setDraftDirty(true);
+    setProfile((current) => ({ ...current, [field]: value }));
+  };
 
   const saveProfile = async (e) => {
     e.preventDefault();
-    await api.patch('/settings/profile', profile);
-    await refreshMe();
-    setSavedMsg('تم حفظ الملف الشخصي');
-    setTimeout(() => setSavedMsg(''), 2000);
+    if (!teacher?.id || !profile.full_name.trim()) return;
+    setSaving(true);
+    setError('');
+    setSavedMsg('');
+    const optimisticTeacher = { ...teacher, ...profile };
+    updateLocalTeacher(optimisticTeacher);
+    try {
+      await api.patch('/settings/profile', profile);
+      removeProfileDraft(teacher.id);
+      setDraftDirty(false);
+      await refreshMe();
+      setSavedMsg('تم حفظ الملف الشخصي ومزامنته');
+    } catch {
+      savePendingProfile(teacher.id, profile);
+      setSavedMsg('تم حفظ التغييرات على هذا الجهاز، وستتم المزامنة عند عودة الاتصال');
+      setError('تعذر الاتصال بالخادم حاليًا. بياناتك المحلية محفوظة ولن تضيع.');
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSavedMsg(''), 3500);
+    }
   };
 
   return (
     <div className="card p-5">
       <h3 className="font-bold mb-3">الملف الشخصي</h3>
       <form onSubmit={saveProfile} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div><label className="label">الاسم الكامل</label><input className="input" value={profile.full_name} onChange={(e) => setProfile({ ...profile, full_name: e.target.value })} /></div>
-        <div><label className="label">المادة</label><input className="input" value={profile.subject} onChange={(e) => setProfile({ ...profile, subject: e.target.value })} /></div>
-        <div><label className="label">المرحلة الدراسية</label><input className="input" value={profile.school_stage} onChange={(e) => setProfile({ ...profile, school_stage: e.target.value })} /></div>
-        <div><label className="label">اسم المدرسة</label><input className="input" value={profile.school_name} onChange={(e) => setProfile({ ...profile, school_name: e.target.value })} /></div>
-        <div className="sm:col-span-2 flex items-center gap-3">
-          <button className="btn-primary" type="submit">حفظ</button>
+        <div><label className="label">الاسم الكامل</label><input className="input" value={profile.full_name} onChange={(e) => updateProfileField('full_name', e.target.value)} /></div>
+        <div><label className="label">المادة</label><input className="input" value={profile.subject} onChange={(e) => updateProfileField('subject', e.target.value)} /></div>
+        <div><label className="label">المرحلة الدراسية</label><input className="input" value={profile.school_stage} onChange={(e) => updateProfileField('school_stage', e.target.value)} /></div>
+        <div><label className="label">اسم المدرسة</label><input className="input" value={profile.school_name} onChange={(e) => updateProfileField('school_name', e.target.value)} /></div>
+        <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+          <button className="btn-primary" type="submit" disabled={saving}>{saving ? 'جارٍ الحفظ...' : 'حفظ'}</button>
           {savedMsg && <span className="text-primary text-sm">{savedMsg}</span>}
+          {error && <span className="text-danger text-sm">{error}</span>}
         </div>
       </form>
     </div>
@@ -206,7 +248,12 @@ export default function Settings() {
       {tab === 'behavior' && <BehaviorTemplateManager />}
       {tab === 'recommendations' && <RecommendationsTab />}
       {tab === 'templates' && <TemplatesTab />}
-      {tab === 'backup' && <BackupManager />}
+      {tab === 'backup' && (
+        <>
+          <BackupManager />
+          <LocalStorageManager />
+        </>
+      )}
     </div>
   );
 }
