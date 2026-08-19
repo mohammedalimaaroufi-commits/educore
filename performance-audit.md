@@ -42,6 +42,20 @@
 - The optimized conversation-list SQL executed successfully against local SQLite.
 - Local server startup succeeded on a test port.
 
+## Production incident found in Render logs
+
+Render logs showed repeated failures from `backend/src/routes/attendance.js:44`:
+
+```text
+Error: Hrana(Api("SQLite error: cannot rollback - no transaction is active"))
+```
+
+The root cause is the `libsql` package's better-sqlite3-compatible `transaction()` wrapper. It sends `BEGIN`, `COMMIT`, and `ROLLBACK` as separate remote Hrana requests. When the remote transaction has already ended or a statement fails remotely, its error handler sends `ROLLBACK` even though no transaction is active, generating the observed failure. The same unsafe pattern existed in attendance, grades, schemes, admin, students, and backup routes.
+
+The code now overrides `db.transaction()` only when `LIBSQL_URL` is set, executing the existing callback sequentially for Turso while retaining real transactions for local SQLite. This prevents the rollback exception from taking down requests. It trades atomicity for stability; a later migration to `@libsql/client` with explicit batch/transaction APIs is recommended for high-volume workloads.
+
+The Render log also showed `ECONNABORTED` request messages. Those are client/request cancellations and are not the primary crash cause. The database rollback error is the confirmed application defect.
+
 ## Important constraint
 
 Existing accounts cannot be used as a performance baseline if the deployed service is still switching between SQLite and Turso. Database mode must be verified before comparing timings. The performance changes are local and must be committed and deployed to Render before testing the public service.

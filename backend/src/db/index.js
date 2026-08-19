@@ -15,6 +15,16 @@ const db = isRemote
     })
   : new LocalDatabase(path.join(DATA_DIR, 'educore.sqlite'));
 
+// `libsql` exposes a better-sqlite3-shaped transaction helper, but its remote
+// Hrana implementation can issue a rollback after the remote transaction has
+// already ended. That produces `cannot rollback - no transaction is active`
+// and makes an otherwise valid request fail. Keep real transactions locally;
+// for remote Turso, execute the existing callback sequentially so requests do
+// not crash. A later async batch migration can restore atomic batching.
+if (isRemote) {
+  db.transaction = (callback) => (...args) => callback(...args);
+}
+
 if (!isRemote) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');

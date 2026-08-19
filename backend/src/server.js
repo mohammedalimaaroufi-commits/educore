@@ -105,11 +105,15 @@ app.get('*', (req, res, next) => {
 
 
 app.use((err, req, res, next) => {
-  
-  console.error(err);
-  
-  res.status(500).json({ error: 'حدث خطأ في الخادم' });
-  
+  // Browsers and mobile networks can cancel requests while navigating or
+  // waking from sleep. Do not turn those cancellations into noisy 500s.
+  if (err?.code === 'ECONNABORTED' || req.destroyed || res.headersSent) {
+    if (res.headersSent) return next(err);
+    return;
+  }
+
+  console.error('Unhandled request error:', err);
+  if (!res.headersSent) res.status(500).json({ error: 'حدث خطأ في الخادم' });
 });
 
 
